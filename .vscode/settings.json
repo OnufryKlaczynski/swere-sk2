@@ -51,6 +51,8 @@
         "typeinfo": "cpp",
         "valarray": "cpp",
         "set": "cpp",
-        "random": "cpp"
+        "random": "cpp",
+        "condition_variable": "cpp",
+        "mutex": "cpp"
     }
 }

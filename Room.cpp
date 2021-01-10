@@ -14,6 +14,7 @@ public:
     std::string roomName;
     std::string hostNick;
     std::vector<std::string> nicks;
+    std::vector<int> usersDescriptors;
     std::map<std::string, std::set<std::string>> userLettersMap;
     bool isGameStarted;
     bool gameFinished;

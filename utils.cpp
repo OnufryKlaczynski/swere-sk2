@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <vector>
+#include <poll.h>
 
 using json = nlohmann::json;
 
@@ -43,7 +44,8 @@ std::vector<size_t> findAllStringPositions(std::string str, std::string subStr)
 }
 
 template <class T>
-json vectorToJson(std::vector<T> vector) {
+json vectorToJson(std::vector<T> vector)
+{
     auto jsonObject = json::array();
     for (auto &element : vector)
     {
@@ -51,3 +53,6 @@ json vectorToJson(std::vector<T> vector) {
     }
     return jsonObject;
 }
+
+
+
