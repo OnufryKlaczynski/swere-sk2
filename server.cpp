@@ -155,6 +155,7 @@ void handleGame(int server_socket_descriptor, pollfd clientConnections[])
                         std::set<std::string> emptySet = std::set<std::string>();
                         room.usersDescriptors.push_back(clientFd);
                         room.userLettersMap.insert(std::pair<std::string, std::set<std::string>>(nick, emptySet));
+                        room.userWrongCounterMap.insert(std::pair<std::string, int>(nick, 0));
                         json responseMessage = R"(
                                                     {
                                                         "type": "USER_JOINED_ROOM",
@@ -162,6 +163,7 @@ void handleGame(int server_socket_descriptor, pollfd clientConnections[])
                                                     }
                                                 )"_json;
                         responseMessage["otherPlayersInRoom"] = vectorToJson(room.nicks);
+                        
                         for (int descriptor : room.usersDescriptors)
                         {
                             sendMessage(descriptor, responseMessage);
@@ -205,8 +207,21 @@ void handleGame(int server_socket_descriptor, pollfd clientConnections[])
                                                 )"_json;
                         responseMessage["letterPositions"] = vectorToJson(lettersPositions);
                         responseMessage["gameFinished"] = room.gameFinished;
-
+                        
+                        responseMessage["letterGuessed"] = letter;
                         sendMessage(clientFd, responseMessage);
+
+                        for (int descriptor : room.usersDescriptors)
+                        {
+                            responseMessage = R"(
+                                {
+                                    "type": "SOMEBODY_GUESSED_WRONG"
+                                }
+                            )"_json;
+                            responseMessage["userWrongCounterMap"] = room.userWrongCounterMap;
+                            sendMessage(descriptor, responseMessage);
+                            //TODO czy to się wysyła do wszystkich?? 
+                        }
                     }
                 }
             }

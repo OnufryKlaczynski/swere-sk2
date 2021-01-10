@@ -19,6 +19,7 @@ public:
     bool isGameStarted;
     bool gameFinished;
     std::string wordToFind;
+    std::map<std::string, int> userWrongCounterMap;
 
     Room(std::string roomName, std::string hostNick)
     {
@@ -28,6 +29,7 @@ public:
         this->isGameStarted = false;
         this->gameFinished = false;
         this->userLettersMap = std::map<std::string, std::set<std::string>>();
+        this->userWrongCounterMap = std::map<std::string, int>();
     }
 
     std::vector<size_t> guessLetter(std::string userNick, std::string letter)
@@ -37,8 +39,14 @@ public:
         auto found = wordToFind.find(letter);
         checkIfGameHasFinished(guessedLetters);
 
-        return findAllStringPositions(this->wordToFind, letter);
+        std::vector<size_t> positions=  findAllStringPositions(this->wordToFind, letter);
+        if ( positions.size() == 0) {
+            this->userWrongCounterMap.at(userNick)++;
+        }
+        return positions;
     }
+
+    
 
 private:
     bool checkIfGameHasFinished(std::set<std::string> guessedLetters)
@@ -60,7 +68,13 @@ private:
 
 void to_json(json &j, const Room &g)
 {
-    j = json{{"roomName", g.roomName}, {"isGameStarted", g.isGameStarted}, {"hostNick", g.hostNick}};
+    j = json{
+        {"roomName", g.roomName}, 
+        {"isGameStarted", g.isGameStarted}, 
+        {"hostNick", g.hostNick}, 
+        {"gameFinished", g.gameFinished},
+        {"userWrongCounterMap", g.userWrongCounterMap}
+        };
 }
 
 void from_json(const json &j, Room &g)
