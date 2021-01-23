@@ -14,6 +14,7 @@ public:
     std::string roomName;
     std::string hostNick;
     std::vector<std::string> nicks;
+    std::vector<std::string> losers;
     std::vector<int> usersDescriptors;
     std::map<std::string, std::set<std::string>> userLettersMap;
     bool isGameStarted;
@@ -39,18 +40,17 @@ public:
         auto found = wordToFind.find(letter);
         checkIfGameHasFinished(guessedLetters);
 
-        std::vector<size_t> positions=  findAllStringPositions(this->wordToFind, letter);
-        if ( positions.size() == 0) {
+        std::vector<size_t> positions = findAllStringPositions(this->wordToFind, letter);
+        if (positions.size() == 0)
+        {
             this->userWrongCounterMap.at(userNick)++;
         }
         return positions;
     }
 
-    
-
 private:
     bool checkIfGameHasFinished(std::set<std::string> guessedLetters)
-    {   
+    {
         bool gameFinished = true;
         for (char const &c : this->wordToFind)
         {
@@ -69,15 +69,30 @@ private:
 void to_json(json &j, const Room &g)
 {
     j = json{
-        {"roomName", g.roomName}, 
-        {"isGameStarted", g.isGameStarted}, 
-        {"hostNick", g.hostNick}, 
+        {"roomName", g.roomName},
+        {"isGameStarted", g.isGameStarted},
+        {"hostNick", g.hostNick},
         {"gameFinished", g.gameFinished},
-        {"userWrongCounterMap", g.userWrongCounterMap}
-        };
+        {"userWrongCounterMap", g.userWrongCounterMap}};
 }
 
 void from_json(const json &j, Room &g)
 {
     j.at("roomName").get_to(g.roomName);
+}
+
+std::vector<Room> sendOnlyNotStartedRooms(std::vector<Room> games)
+{
+  auto it = games.begin();
+  while (it != games.end())
+  {
+    auto curr = it++;
+    if (curr->roomName.empty())
+      return games;
+    if (curr->isGameStarted)
+    {
+      games.erase(curr);
+    }
+  }
+  return games;
 }
