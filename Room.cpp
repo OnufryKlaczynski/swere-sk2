@@ -1,10 +1,13 @@
 #pragma once
+
 #include <string>
 #include <vector>
 #include <set>
+#include <chrono>
 
 #include "lib/json.hpp"
 #include "utils.cpp"
+#include "WordsGenerator.cpp"
 
 using json = nlohmann::json;
 
@@ -19,6 +22,9 @@ public:
     std::map<std::string, std::set<std::string>> userLettersMap;
     bool isGameStarted;
     bool gameFinished;
+    bool timeRunOut;
+    bool maxPlayers;
+    std::chrono::time_point<std::chrono::system_clock> start_time;
     std::string wordToFind;
     std::map<std::string, int> userWrongCounterMap;
 
@@ -26,8 +32,9 @@ public:
     {
         this->roomName = roomName;
         this->hostNick = hostNick;
-        this->wordToFind = "kurwa";
+        this->wordToFind = chooseWord();
         this->isGameStarted = false;
+        this->maxPlayers = false;
         this->gameFinished = false;
         this->userLettersMap = std::map<std::string, std::set<std::string>>();
         this->userWrongCounterMap = std::map<std::string, int>();
@@ -72,7 +79,9 @@ void to_json(json &j, const Room &g)
         {"roomName", g.roomName},
         {"isGameStarted", g.isGameStarted},
         {"hostNick", g.hostNick},
+        {"maxPlayers", g.maxPlayers},
         {"gameFinished", g.gameFinished},
+        {"timeRunOut", g.timeRunOut},
         {"userWrongCounterMap", g.userWrongCounterMap}};
 }
 
@@ -83,16 +92,19 @@ void from_json(const json &j, Room &g)
 
 std::vector<Room> sendOnlyNotStartedRooms(std::vector<Room> games)
 {
-  auto it = games.begin();
-  while (it != games.end())
-  {
-    auto curr = it++;
-    if (curr->roomName.empty())
-      return games;
-    if (curr->isGameStarted)
+    auto it = games.begin();
+    while (it != games.end())
     {
-      games.erase(curr);
+        auto curr = it;
+        if (curr->isGameStarted || curr->maxPlayers)
+        {
+            games.erase(curr);
+            if (games.empty())
+                return games;
+            it = games.begin();
+            continue;
+        }
+        ++it;
     }
-  }
-  return games;
+    return games;
 }

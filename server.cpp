@@ -1,4 +1,4 @@
-#include <thread>
+mmito#include <thread>
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -13,10 +13,14 @@
 #include <poll.h>
 #include <error.h>
 #include <mutex>
+#include <chrono>
 
 #include "lib/json.hpp"
 #include "Room.cpp"
 #include "utils.cpp"
+#include "LoginHandler.cpp"
+#include "GameHandler.cpp"
+#include "RoomHandler.cpp"
 
 #include <algorithm>
 
@@ -25,15 +29,20 @@
 using json = nlohmann::json;
 
 const int QUEUE_SIZE = 10;
-pollfd *clientConnections;
+pollfd *clientConnections = nullptr;
 std::mutex newClientMutex;
 std::vector<std::string> users;
 std::vector<int> clients;
 std::map<std::string, Room> rooms;
+const int MAX_PLAYERS_IN_ROOM = 2;
+int xd = 0;
 
 void updateClientConnections()
 {
     newClientMutex.lock();
+    
+    delete clientConnections;
+    
     clientConnections = new pollfd[clients.size()]; //possible memory leak?? nie wiem nie znam się, działa XD
     int s = clients.size();
     for (int i = 0; i < s; ++i)
@@ -61,11 +70,26 @@ void acceptNewClients(int server_socket_descriptor, pollfd clientDescriptors[])
         newClientMutex.lock();
         printf("Connection from %s:%hu\n", inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
         printf("Client descriptor %d\n\n", clientFd);
+        currentClientSize = clients.size();
         clientDescriptors[currentClientSize].fd = clientFd;
         clients.push_back(clientFd);
         clientDescriptors[currentClientSize].events = (POLLIN | POLLOUT | POLLRDHUP);
-        currentClientSize++;
         newClientMutex.unlock();
+    }
+}
+
+void sendInfoAboutRoomsToAll()
+{
+    json responseMessage = R"(
+                           {
+                             "type": "SERVERS_INFO",
+                              "result": "SUCCESS"
+                               }
+                            )"_json;
+    responseMessage["rooms"] = sendOnlyNotStartedRooms(extract_values(rooms));
+    for (int descriptor : clients)
+    {
+        sendMessage(descriptor, responseMessage);
     }
 }
 
@@ -82,18 +106,20 @@ void handleGame(int server_socket_descriptor, pollfd clientConnections[])
     json roomsJson = roomsVect;
 
     rooms.insert(std::pair<std::string, Room>("room1", game1));
-    rooms.insert(std::pair<std::string, Room>("room2", game2));
-    rooms.insert(std::pair<std::string, Room>("room3", game3));
+
 
     while (1)
-    {
+    {   
+        rooms = checkRoomTimers(rooms);
+
         int gotowe = poll(clientConnections, QUEUE_SIZE, 100);
 
         if (gotowe == -1)
         {
             error(1, errno, "poll failed");
         }
-        for (int i = 0; i < clients.size(); i++)
+        int size = clients.size();
+        for (int i = 0; i < size; i++)
         {
             pollfd &opis = clientConnections[i];
             if (opis.revents & POLLIN)
@@ -104,37 +130,12 @@ void handleGame(int server_socket_descriptor, pollfd clientConnections[])
                 if (read_result == 0)
                 {
                     std::cout << "Descriptor disconected:" << clientFd << "\n\n";
-                    clients.erase(std::remove(clients.begin(), clients.end(), clientConnections[i].fd), clients.end());
                     std::string nick = users[i];
-                    for (std::string roomName : extract_keys(rooms))
-                    {
-                        Room &room = rooms.at(roomName);
-                        const auto roomNickSize = room.nicks.size();
-                        room.nicks.erase(std::remove(room.nicks.begin(), room.nicks.end(), nick), room.nicks.end());
-                        room.usersDescriptors.erase(std::remove(room.usersDescriptors.begin(), room.usersDescriptors.end(), clientFd), room.usersDescriptors.end());
-                        room.userLettersMap.erase(nick);
-                        room.userWrongCounterMap.erase(nick);
-                        if (room.nicks.size() != roomNickSize)
-                        {
-                            json responseMessage = R"(
-                                                {
-                                                    "type": "USER_LEFT_ROOM",
-                                                    "result": "SUCCESS"
-                                                }
-                                            )"_json;
-                            responseMessage["otherPlayersInRoom"] = vectorToJson(room.nicks);
-                            responseMessage["rooms"] = sendOnlyNotStartedRooms(extract_values(rooms));
-
-                            for (int descriptor : room.usersDescriptors)
-                            {
-                                sendMessage(descriptor, responseMessage);
-                            }
-                            break;
-                        }
-                    }
-
-                    shutdown(clientConnections[i].fd, SHUT_RDWR);
-                    close(clientConnections[i].fd);
+                    users.erase(std::remove(users.begin(), users.end(), nick), users.end());
+                    clients.erase(std::remove(clients.begin(), clients.end(), clientConnections[i].fd), clients.end());
+                    clientConnections[i] = clientConnections[clients.size()];
+                    shutdown(clientFd, SHUT_RDWR);
+                    close(clientFd);
                 }
                 if (read_result > 0)
                 {
@@ -154,129 +155,80 @@ void handleGame(int server_socket_descriptor, pollfd clientConnections[])
 
                     if (type == "LOGIN")
                     {
-
-                        users.push_back((std::string)messageFromClient["nick"]);
-                        std::cout << "Użytkownik " << (std::string)messageFromClient["nick"] << "został dopisany do listy użytkowników" << std::endl
-                                  << std::endl;
-                        std::cout << "Message from client:\n\n"
-                                  << messageFromClient.dump() << std::endl;
-                        json responseMessage = R"(
-                                                    {
-                                                        "type": "USER_AUTHENTICATED",
-                                                        "result": "SUCCESS"
-                                                    }
-                                                )"_json;
-                        responseMessage["rooms"] = sendOnlyNotStartedRooms(extract_values(rooms));
-                        sendMessage(clientFd, responseMessage);
+                        users = claimUser(messageFromClient, clientFd, sendOnlyNotStartedRooms(extract_values(rooms)), users);
                     }
                     else if (type == "CREATE_ROOM")
                     {
                         std::string roomName = (std::string)messageFromClient["roomName"];
                         std::string hostNick = (std::string)messageFromClient["nick"];
-                        Room newRoom(roomName, hostNick);
-                        rooms.insert(std::pair<std::string, Room>(roomName, newRoom));
-                        Room &room = rooms.at(roomName);
-                        room.nicks.push_back(hostNick);
-                        room.usersDescriptors.push_back(clientFd);
-                        std::set<std::string> emptySet = std::set<std::string>();
-                        room.userLettersMap.insert(std::pair<std::string, std::set<std::string>>(hostNick, emptySet));
-                        room.userWrongCounterMap.insert(std::pair<std::string, int>(hostNick, 0));
-                        json responseMessage = R"(
-                           {
-                             "type": "ROOM_CREATED",
-                              "result": "SUCCESS"
-                               }
-                            )"_json;
-                        responseMessage["rooms"] = sendOnlyNotStartedRooms(extract_values(rooms));
-                        for (int descriptor : clients)
-                        {
-                            sendMessage(descriptor, responseMessage);
-                        }
-                        responseMessage = R"(
-                                                    {
-                                                        "type": "USER_JOINED_ROOM",
-                                                        "result": "SUCCESS"
-                                                    }
-                                                )"_json;
-                        responseMessage["otherPlayersInRoom"] = vectorToJson(room.nicks);
-                        sendMessage(clientFd, responseMessage);
+                        rooms = createRoom(roomName, hostNick, clientFd, rooms, clients);
                     }
                     else if (type == "JOIN_ROOM")
                     {
                         std::string roomName = (std::string)messageFromClient["roomName"];
                         std::string nick = (std::string)messageFromClient["nick"];
                         Room &room = rooms.at(roomName);
-                        room.nicks.push_back(nick);
-                        std::set<std::string> emptySet = std::set<std::string>();
-                        room.usersDescriptors.push_back(clientFd);
-                        room.userLettersMap.insert(std::pair<std::string, std::set<std::string>>(nick, emptySet));
-                        room.userWrongCounterMap.insert(std::pair<std::string, int>(nick, 0));
-                        json responseMessage = R"(
+                        if (room.nicks.size() >= MAX_PLAYERS_IN_ROOM)
+                        {
+                            json responseMessage = R"(
                                                     {
                                                         "type": "USER_JOINED_ROOM",
-                                                        "result": "SUCCESS"
+                                                        "result": "ERROR"
                                                     }
                                                 )"_json;
-                        responseMessage["otherPlayersInRoom"] = vectorToJson(room.nicks);
-
-                        for (int descriptor : room.usersDescriptors)
-                        {
-                            sendMessage(descriptor, responseMessage);
+                            sendMessage(clientFd, responseMessage);
+                            continue;
                         }
+                        joinRoom(nick, clientFd, room, MAX_PLAYERS_IN_ROOM);
+                        sendInfoAboutRoomsToAll();
                     }
                     else if (type == "LEAVE_ROOM")
                     {
                         std::string roomName = (std::string)messageFromClient["roomName"];
                         std::string nick = (std::string)messageFromClient["nick"];
+                        int position = find(users.begin(), users.end(), nick) - users.begin();
+                        rooms = leaveRoom(nick, roomName, clients, position, rooms, MAX_PLAYERS_IN_ROOM, false);
+                        sendInfoAboutRoomsToAll();
+                    }
+                    else if (type == "LEAVE_GAME")
+                    {
+                        std::string roomName = (std::string)messageFromClient["roomName"];
+                        std::string nick = (std::string)messageFromClient["nick"];
                         Room &room = rooms.at(roomName);
+                        if (room.nicks.empty())
+                        {
+                            rooms.erase(roomName);
+                            continue;
+                        }
+                        rooms = leaveGame(nick, roomName, clientFd, rooms);
+                        sendInfoAboutRoomsToAll();
+                    }
+                    else if (type == "LEAVE_LOBBY")
+                    {
+                    }
+                    else if (type == "LEAVE_HOSTROOM")
+                    {
+                        std::string nick = users[i];
+                        std::string roomName = (std::string)messageFromClient["roomName"];
+
+                        Room &room = rooms.at(roomName);
+                        int position = find(users.begin(), users.end(), nick) - users.begin();
+                        const auto roomNickSize = room.nicks.size();
                         room.nicks.erase(std::remove(room.nicks.begin(), room.nicks.end(), nick), room.nicks.end());
                         room.usersDescriptors.erase(std::remove(room.usersDescriptors.begin(), room.usersDescriptors.end(), clientFd), room.usersDescriptors.end());
                         room.userLettersMap.erase(nick);
                         room.userWrongCounterMap.erase(nick);
-                        json responseMessage = R"(
-                                                    {
-                                                        "type": "USER_LEFT_ROOM",
-                                                        "result": "SUCCESS"
-                                                    }
-                                                )"_json;
-                        responseMessage["otherPlayersInRoom"] = vectorToJson(room.nicks);
-                        responseMessage["rooms"] = sendOnlyNotStartedRooms(extract_values(rooms));
-
-                        for (int descriptor : room.usersDescriptors)
+                        if (room.nicks.size() != roomNickSize)
                         {
-                            sendMessage(descriptor, responseMessage);
+                            rooms = leaveRoom(nick, roomName, clients, position, rooms, MAX_PLAYERS_IN_ROOM, true);
+                            break;
                         }
+                        sendInfoAboutRoomsToAll();
                     }
                     else if (type == "START_GAME")
                     {
                         std::string roomName = (std::string)messageFromClient["roomName"];
-                        Room &room = rooms.at(roomName);
-                        room.isGameStarted = true;
-                        json responseMessage = R"(
-                                                    {
-                                                        "type": "GAME_STARTED",
-                                                        "result": "SUCCESS"
-                                                    }
-                                                )"_json;
-                        responseMessage["howLongIsTheWord"] = room.wordToFind.size();
-                        responseMessage["roomName"] = roomName;
-
-                        for (int descriptor : room.usersDescriptors)
-                        {
-                            sendMessage(descriptor, responseMessage);
-                        }
-
-                        json responseMessage2 = R"(
-                            {
-                                "type": "BLOCK_ROOM",
-                                "result": "SUCCESS"
-                            }
-                        )"_json;
-                        responseMessage2["rooms"] = sendOnlyNotStartedRooms(extract_values(rooms));
-                        for (int descriptor : clients)
-                        {
-                            sendMessage(descriptor, responseMessage2);
-                        }
+                        rooms = startGame(rooms, roomName, clients);
                     }
                     else if (type == "SEND_LETTER")
                     {
@@ -285,86 +237,21 @@ void handleGame(int server_socket_descriptor, pollfd clientConnections[])
                         std::string nick = (std::string)messageFromClient["nick"];
 
                         Room &room = rooms.at(roomName);
-                        json responseMessage;
-                        if (room.userWrongCounterMap[nick] == 10)
+                        int lost = handleLosers(room, nick, roomName, letter, clientFd);
+
+                        if (lost == 1)
                         {
-                            if (std::find(room.losers.begin(), room.losers.end(), nick) == room.losers.end())
-                                room.losers.push_back(nick);
-                            if (room.losers.size() == room.userWrongCounterMap.size())
-                            {
-
-                                responseMessage = R"(
-                                {
-                                    "type": "YOU_LOST",
-                                    "result": "SUCCESS"
-                                }
-                            )"_json;
-                                responseMessage["loser"] = nick;
-                                sendMessage(clientFd, responseMessage);
-
-                                room.gameFinished = true;
-                                for (int descriptor : room.usersDescriptors)
-                                {
-                                    responseMessage = R"(
-                                        {
-                                            "type": "GAME_FINISHED",
-                                            "result": "SUCCESS"
-                                        }
-                                    )"_json;
-                                    responseMessage["winner"] = room.wordToFind;
-                                    sendMessage(descriptor, responseMessage);
-                                }
-                                //rooms.erase(roomName);
-                                continue;
-                            }
-                            responseMessage = R"(
-                                {
-                                    "type": "YOU_LOST",
-                                    "result": "SUCCESS"
-                                }
-                            )"_json;
-                            responseMessage["loser"] = nick;
-                            sendMessage(clientFd, responseMessage);
-
+                            rooms.erase(roomName);
                             continue;
                         }
-                        std::vector<size_t> lettersPositions = room.guessLetter(nick, letter);
+                        else if (lost == 2)
+                            continue;
+
+                        handleLetter(room, nick, roomName, letter, clientFd);
                         if (room.gameFinished)
                         {
-                            for (int descriptor : room.usersDescriptors)
-                            {
-                                responseMessage = R"(
-                                        {
-                                            "type": "GAME_FINISHED",
-                                            "result": "SUCCESS"
-                                        }
-                                    )"_json;
-                                responseMessage["winner"] = nick;
-                                sendMessage(descriptor, responseMessage);
-                            }
+                            rooms.erase(roomName);
                             continue;
-                        }
-                        responseMessage = R"(
-                                                {
-                                                    "type": "LETTER_RECEIVED",
-                                                    "result": "SUCCESS"
-                                                }
-                                            )"_json;
-                        responseMessage["letterPositions"] = vectorToJson(lettersPositions);
-                        responseMessage["gameFinished"] = room.gameFinished;
-
-                        responseMessage["letterGuessed"] = letter;
-                        sendMessage(clientFd, responseMessage);
-
-                        for (int descriptor : room.usersDescriptors)
-                        {
-                            responseMessage = R"(
-                                                {
-                                                    "type": "SOMEBODY_GUESSED_WRONG"
-                                                }
-                                            )"_json;
-                            responseMessage["userWrongCounterMap"] = room.userWrongCounterMap;
-                            sendMessage(descriptor, responseMessage);
                         }
                     }
                 }
@@ -410,7 +297,7 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    clientConnections = (pollfd *)malloc(sizeof(pollfd));
+    clientConnections = new pollfd[0];
 
     std::thread acceptClientsThread(acceptNewClients, server_socket_descriptor, clientConnections);
     std::thread handleGameThread(handleGame, server_socket_descriptor, clientConnections);

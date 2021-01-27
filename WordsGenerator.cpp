@@ -18,10 +18,9 @@ Iter select_randomly(Iter start, Iter end)
     return select_randomly(start, end, gen);
 }
 
-int main()
+std::string chooseWord()
 {
-    const std::vector<std::string> foo{"mama", "tata", "adam malysz", "burza"};
+    const std::vector<std::string> foo{"mama", "tata", "malysz", "burza"};
     std::string r = *select_randomly(foo.begin(), foo.end());
-    std::cout << r << std::endl;
-    return 0;
+    return r;
 }

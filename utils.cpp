@@ -14,9 +14,7 @@
 #include <vector>
 #include <poll.h>
 
-
 using json = nlohmann::json;
-
 
 void sendMessage(int clientFd, json message)
 {
@@ -77,5 +75,3 @@ std::vector<TV> extract_values(std::map<TK, TV> const &input_map)
   }
   return retval;
 }
-
-
