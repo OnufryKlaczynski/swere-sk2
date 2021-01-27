@@ -1,4 +1,4 @@
-mmito#include <thread>
+#include <thread>
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -40,10 +40,10 @@ int xd = 0;
 void updateClientConnections()
 {
     newClientMutex.lock();
-    
+
     delete clientConnections;
-    
-    clientConnections = new pollfd[clients.size()]; //possible memory leak?? nie wiem nie znam się, działa XD
+
+    clientConnections = new pollfd[clients.size()];
     int s = clients.size();
     for (int i = 0; i < s; ++i)
     {
@@ -107,9 +107,8 @@ void handleGame(int server_socket_descriptor, pollfd clientConnections[])
 
     rooms.insert(std::pair<std::string, Room>("room1", game1));
 
-
     while (1)
-    {   
+    {
         rooms = checkRoomTimers(rooms);
 
         int gotowe = poll(clientConnections, QUEUE_SIZE, 100);
